@@ -1,0 +1,5 @@
+oracledb>=1.4
+paramiko>=2.11
+requests>=2.28
+redis>=4.1
+pyinstaller>=5.13

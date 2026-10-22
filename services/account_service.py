@@ -1,0 +1,151 @@
+"""Account lookup & billing-cycle services shared by Tab 1 and Tab 4."""
+from typing import List, Optional
+
+from connections.db_client import OracleClient
+from core.errors import BusinessRuleError
+from core.models import AccountInfo, BillingCycle, CycleQueryResult
+
+_CYCLE_WINDOW_MONTHS = 5
+
+
+class AccountService:
+    """Read-only account validation + billing cycle queries."""
+
+    def __init__(self, db: OracleClient):
+        self._db = db
+
+    def resolve_acct_id(self, user_input: str) -> str:
+        """Accept acct_id or acct_nbr, return the numeric acct_id as str."""
+        row = self._db.query_one(
+            "SELECT acct_id FROM acct WHERE acct_id = :1", [user_input])
+        if not row:
+            row = self._db.query_one(
+                "SELECT acct_id FROM acct WHERE acct_nbr = :1", [user_input])
+        if not row:
+            raise BusinessRuleError("No account found.")
+        return str(row[0])
+
+    def get_account_info(self, acct_id: str) -> AccountInfo:
+        row = self._db.query_one(
+            """SELECT BILLING_CYCLE_TYPE_ID, STATE, POSTPAID
+               FROM acct WHERE acct_id = :1""", [acct_id])
+        if not row:
+            raise BusinessRuleError("Account details not found.")
+        cycle_type_id, state, postpaid = row
+        return AccountInfo(
+            acct_id=str(acct_id),
+            state=state,
+            postpaid=(postpaid == 'Y'),
+            billing_cycle_type_id=cycle_type_id
+        )
+
+    def validate_active_postpaid(self, acct_id: str) -> AccountInfo:
+        info = self.get_account_info(acct_id)
+        if info.state != 'A':
+            raise BusinessRuleError("Account is not in use.")
+        if not info.postpaid:
+            raise BusinessRuleError("Account is not in Postpaid.")
+        return info
+
+    def validate_active(self, acct_id: str) -> AccountInfo:
+        info = self.get_account_info(acct_id)
+        if info.state != 'A':
+            raise BusinessRuleError("Account is not active.")
+        return info
+
+    def get_billing_cycles(self, cycle_type_id: int,
+                           months: int = _CYCLE_WINDOW_MONTHS) -> CycleQueryResult:
+        """Fetch cycles within +/- `months` of today, newest first."""
+        sql = """
+            SELECT BILLING_CYCLE_TYPE_ID, BILLING_CYCLE_ID,
+                   TO_CHAR(CYCLE_BEGIN_DATE, 'YYYY-MM-DD'),
+                   TO_CHAR(CYCLE_END_DATE, 'YYYY-MM-DD'),
+                   CASE WHEN CYCLE_BEGIN_DATE <= SYSDATE AND SYSDATE <= CYCLE_END_DATE
+                        THEN 1 ELSE 0 END
+            FROM BILLING_CYCLE
+            WHERE BILLING_CYCLE_TYPE_ID = :1
+              AND CYCLE_END_DATE >= ADD_MONTHS(SYSDATE, :2)
+              AND CYCLE_END_DATE <= ADD_MONTHS(SYSDATE, :3)
+            ORDER BY CYCLE_BEGIN_DATE DESC
+        """
+        rows = self._db.query_all(sql, [cycle_type_id, -months, months])
+        cycles: List[BillingCycle] = [
+            BillingCycle(
+                billing_cycle_id=r[1],
+                cycle_type_id=r[0],
+                begin_date=r[2],
+                end_date=r[3],
+                is_current=(r[4] == 1)
+            ) for r in rows
+        ]
+        return CycleQueryResult(cycles=cycles)
+
+    def get_subs_ids(self, acct_id: str) -> List[str]:
+        """All subscription ids under an account (subs JOIN acct)."""
+        sql = """SELECT s.subs_id
+                   FROM subs s JOIN acct a ON s.acct_id = a.acct_id
+                  WHERE s.acct_id = :1
+                  ORDER BY s.subs_id"""
+        rows = self._db.query_all(sql, [acct_id])
+        return [str(r[0]) for r in rows]
+
+    def get_bal_share_subs_ids(self, acct_id: str) -> List[str]:
+        """Subscriptions in the balance-sharing pool of this account.
+
+        bal_share (PAYMENT_FORCE='Y') joined to bal_share_detail with no
+        EXP_DATE: these subs share balance with the account and must also
+        get RecurrRate pre-charges, otherwise the shared portion of the
+        recurring fee is missing from the generated bill.
+        """
+        sql = """
+            SELECT bd.subs_id
+              FROM bal_share b
+              JOIN bal_share_detail bd ON b.bal_share_id = bd.bal_share_id
+             WHERE b.acct_id = :1
+               AND bd.exp_date IS NULL
+               AND b.payment_force = 'Y'
+             ORDER BY bd.subs_id
+        """
+        rows = self._db.query_all(sql, [acct_id])
+        return [str(r[0]) for r in rows]
+
+    def count_event_recurring(self, billing_cycle_id, subs_id: str,
+                              acct_item_type_id1=None, truncated_time=None,
+                              on_date=None) -> int:
+        """Row count of one subs in the remote EVENT_RECURRING_<cycle> table.
+
+        When acct_item_type_id1 is given, only rows of that item type are
+        counted (12 = recurring charge).
+        When truncated_time is True, only rows whose EVENT_BEGIN_TIME is a
+        whole day (TRUNC = midnight) are counted - these are generated by
+        RecurrRate pre-billing. Rows with a non-midnight time come from
+        account-opening supplementary charges, which also carry
+        ACCT_ITEM_TYPE_ID1 = 12 and must not be mistaken for pre-billing.
+        When on_date is given ('YYYY-MM-DD'), only rows whose EVENT_BEGIN_TIME
+        falls on that calendar day are counted - RecurrRate writes the
+        pre-charge on the NEXT cycle's begin date (= this cycle's end date),
+        so whole-day rows of any other day must not be mistaken for the
+        pre-charge of the cycle being billed.
+        """
+        sql = (f"SELECT COUNT(*) FROM EVENT_RECURRING_{billing_cycle_id}@link2rb "
+               f"WHERE SUBS_ID = :1")
+        params = [subs_id]
+        bind = 2
+        if acct_item_type_id1 is not None:
+            sql += f" AND ACCT_ITEM_TYPE_ID1 = :{bind}"
+            params.append(acct_item_type_id1)
+            bind += 1
+        if truncated_time:
+            sql += " AND TRUNC(EVENT_BEGIN_TIME) = EVENT_BEGIN_TIME"
+        if on_date:
+            sql += (f" AND TRUNC(EVENT_BEGIN_TIME) = "
+                    f"TO_DATE(:{bind}, 'YYYY-MM-DD')")
+            params.append(on_date)
+        return self._db.query_one(sql, params)[0]
+
+    @staticmethod
+    def default_cycle_index(cycles: List[BillingCycle]) -> int:
+        for idx, c in enumerate(cycles):
+            if c.is_current:
+                return idx
+        return 0

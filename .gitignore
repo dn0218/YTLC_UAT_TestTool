@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Build artifacts
+build/
+dist/
+*.zip
+build_log.txt
+
+# Backups & local junk
+backup/
+console.log*
+
+# cptr internal logs
+.cptr/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Secrets (real configs / credentials should never be committed)
+config_ocs.json
+config_ocs.json.plaintext
+*.plaintext
+*.pem
+*.key
+.env

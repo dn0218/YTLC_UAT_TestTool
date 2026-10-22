@@ -1,0 +1,31 @@
+{
+    "db": {
+        "host": "YOUR_UAT_DB_HOST",
+        "port": 1521,
+        "service_name": "YOUR_SERVICE_NAME",
+        "user": "YOUR_DB_USER",
+        "password": "CHANGE_ME"
+    },
+    "ssh": {
+        "host": "YOUR_UAT_SSH_HOST",
+        "username": "YOUR_SSH_USER",
+        "password": "CHANGE_ME"
+    },
+    "api": {
+        "base_url": "http://YOUR_API_HOST:7000"
+    },
+    "redis": {
+        "nodes": [
+            ["YOUR_REDIS_HOST_1", 28001],
+            ["YOUR_REDIS_HOST_2", 28002]
+        ],
+        "password": null
+    },
+    "crm_db": {
+        "host": "YOUR_UAT_DB_HOST",
+        "port": 1521,
+        "service_name": "YOUR_SERVICE_NAME",
+        "user": "YOUR_CRM_DB_USER",
+        "password": "CHANGE_ME"
+    }
+}
