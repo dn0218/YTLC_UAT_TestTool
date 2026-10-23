@@ -4,12 +4,19 @@ Original single-file `Preprod_TestTool.py` (946 lines) refactored into a
 layered, object-oriented project. Functionality is 100% identical to the
 original tool.
 
+## Contributing (开发者必读)
+
+第一次用 GitHub 的开发者,请先阅读手把手协作指南:
+**[docs/GITHUB_GUIDE_zh-CN.md](docs/GITHUB_GUIDE_zh-CN.md)**
+—— 涵盖环境安装、clone、分支、commit 规范、Pull Request、冲突急救、打包发布全流程。
+
 ## Project layout
 
 ```
 preprod tools/
 ├── main.py                     # entry point
-├── config_ocs.json             # runtime config (db / ssh / api)
+├── config_ocs.json.example     # config template (copy to config_ocs.json;
+│                               #   real config_ocs.json is NOT committed)
 ├── requirements.txt
 ├── build.bat                   # one-click exe build
 ├── build.spec                  # PyInstaller spec
@@ -75,18 +82,20 @@ pyinstaller --noconfirm build.spec
 Result: `dist\PreprodTestTool\PreprodTestTool.exe` (one-folder build; ship the
 whole folder, or switch to `--onefile` by adding a COLLECT-less spec).
 
-Note: `config_ocs.json` is bundled as a default. At runtime the app prefers a
-`config_ocs.json` placed next to the exe, so field engineers can edit
-credentials without rebuilding. If it is missing next to the exe, a default
-one is created automatically on first launch.
+Note: `config_ocs.json` is not stored in git (it contains real endpoints and
+credentials). When building, PyInstaller bundles the local working copy if
+present. At runtime the app prefers a `config_ocs.json` placed next to the
+exe, so field engineers can edit credentials without rebuilding. From a
+fresh clone, copy `config_ocs.json.example` to `config_ocs.json` and fill in
+the real values (ask the maintainer for them).
 
 ## Config format (config_ocs.json)
 
 ```json
 {
-    "db":   { "host": "...", "port": 11521, "service_name": "cc",
-              "user": "cc", "password": "..." },
-    "ssh":  { "host": "...", "username": "ocs", "password": "..." },
+    "db":   { "host": "...", "port": 1521, "service_name": "...",
+              "user": "...", "password": "..." },
+    "ssh":  { "host": "...", "username": "...", "password": "..." },
     "api":  { "base_url": "http://host:7000" }
 }
 ```
