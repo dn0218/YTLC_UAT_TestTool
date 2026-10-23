@@ -25,6 +25,9 @@ console.log*
 .DS_Store
 Thumbs.db
 
+# MS Office lock files (~$xxx.docx)
+~$*
+
 # Secrets (real configs / credentials should never be committed)
 config_ocs.json
 config_ocs.json.plaintext
